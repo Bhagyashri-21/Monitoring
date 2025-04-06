@@ -1,0 +1,141 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: monitoring
+  labels:
+    app: loki
+data:
+  loki-config.yaml: | # This is the actual key in the ConfigMap
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+      log_level: info
+      grpc_listen_port: 9095
+    ingester:
+      chunk_idle_period: 5m
+      chunk_target_size: 1048576
+      max_chunk_age: 1h
+      remove_empty_chunks: true
+    storage_config:
+      boltdb_shipper:
+        active_index_directory: /loki/index
+        cache_location: /loki/cache
+        shared_store: filesystem
+      filesystem:
+        directory: /loki/chunks
+    schema_config:
+      configs:
+        - from: 2020-10-24
+          store: boltdb
+          object_store: filesystem
+          schema: v11
+          index:
+            prefix: index_
+            period: 168h
+    compactor:
+      working_directory: /loki/compactor
+      shared_store: filesystem
+    limits_config:
+      max_cache_size_mb: 500
+      max_streams_per_user: 10000
+    chunk_target_size: 1048576
+    max_chunk_age: 1h
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loki-pvc
+  namespace: monitoring # Ensured that the PVC is in the correct namespace
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: longhorn
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  namespace: monitoring
+  labels:
+    app: loki
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki
+  template:
+    metadata:
+      labels:
+        app: loki
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: loki
+        image: grafana/loki:2.9.8
+        securityContext:
+          runAsUser: 1000
+        ports:
+        - containerPort: 3100
+        volumeMounts:
+        - name: loki-config-volume # Mounting the ConfigMap correctly
+          mountPath: /etc/loki/loki-config.yaml # Correct path to the file inside the container
+          subPath: loki-config.yaml # Mount the specific file, not the entire directory
+        - name: loki-data
+          mountPath: /loki
+      volumes:
+      - name: loki-config-volume
+        configMap:
+          name: loki-config # Reference to the ConfigMap
+      - name: loki-data
+        persistentVolumeClaim:
+          claimName: loki-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: monitoring
+  labels:
+    app: loki
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3100
+    targetPort: 3100
+  selector:
+    app: loki
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loki-ingress
+  namespace: monitoring
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  tls:
+  - hosts:
+    - loki.abhimore.io
+    secretName: abhimore
+  rules:
+  - host: loki.abhimore.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: loki
+            port:
+              number: 3100

@@ -1,0 +1,29 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  http_grpc_listen_port: 9096
+  log_level: info
+
+positions:
+  filename: /loki/positions.yaml
+
+client:
+  backoff_config:
+    max_retries: 10
+    min_backoff: 100ms
+    max_backoff: 1s
+  timeout: 10s
+  url: http://localhost:3100/loki/api/v1/push
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/cache
+    shared_store: filesystem
+  filesystem:
+    directory: /loki/chunks
+
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 24h
